@@ -272,7 +272,6 @@ public class CloudWatchCollector extends Collector {
         executor.shutdown();
         while (!executor.isTerminated()) {
         }
-        System.out.println("Finished all threads");
     }
 
     public List<MetricFamilySamples> collect() {
