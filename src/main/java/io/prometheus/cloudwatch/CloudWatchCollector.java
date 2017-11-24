@@ -14,9 +14,12 @@ import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -87,10 +90,16 @@ public class CloudWatchCollector extends Collector {
 
         ClientConfiguration cc = new ClientConfiguration();
         String proxy = System.getenv("http_proxy");
+
         if(proxy != null && !proxy.isEmpty()) {
-            int port = Integer.parseInt(proxy.split(":")[2]);
-            cc.setProxyHost(proxy);
-            cc.setProxyPort(port);
+            try {
+                URL proxyUrl = new URL(proxy);
+
+                cc.setProxyHost(proxyUrl.getHost());
+                cc.setProxyPort(proxyUrl.getPort());
+            } catch (MalformedURLException e) {
+                LOGGER.log(Level.WARNING, "Proxy configuration is invalid.", e);
+            }
         }
 
         if (client == null) {
@@ -258,19 +267,20 @@ public class CloudWatchCollector extends Collector {
                 + " Unit: " + unit;
     }
 
-    private void scrape(List<MetricFamilySamples> mfs) {
+    private void scrape(List<MetricFamilySamples> mfs) throws InterruptedException {
 
         ExecutorService executor = Executors.newFixedThreadPool(10);
 
-        long start = System.currentTimeMillis();
-        for (MetricRule rule: rules) {
+        try {
+            long start = System.currentTimeMillis();
+            for (MetricRule rule: rules) {
 
-            Runnable worker = new CollectorWorker(mfs,start,rule,brokenDynamoMetrics,client,cloudwatchRequests);
-            executor.execute(worker);
-        }
-
-        executor.shutdown();
-        while (!executor.isTerminated()) {
+                Runnable worker = new CollectorWorker(mfs,start,rule,brokenDynamoMetrics,client,cloudwatchRequests);
+                executor.execute(worker);
+            }
+        } finally {
+            executor.shutdown();
+            executor.awaitTermination(5, TimeUnit.MINUTES);
         }
     }
 
