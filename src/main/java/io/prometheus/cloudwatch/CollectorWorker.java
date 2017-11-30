@@ -1,11 +1,13 @@
 package io.prometheus.cloudwatch;
 
+import com.amazonaws.services.cloudwatch.AmazonCloudWatch;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
 import com.amazonaws.services.cloudwatch.model.*;
 import io.prometheus.client.Collector;
 import io.prometheus.client.Counter;
 
 import java.util.*;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
@@ -17,10 +19,10 @@ public class CollectorWorker implements Runnable {
     private long start;
     private CloudWatchCollector.MetricRule rule;
     private List<String> brokenDynamoMetrics;
-    private AmazonCloudWatchClient client;
+    private AmazonCloudWatch client;
     private Counter cloudwatchRequests;
 
-    public CollectorWorker(List<Collector.MetricFamilySamples> mfs, long start, CloudWatchCollector.MetricRule rule, List<String> brokenDynamoMetrics, AmazonCloudWatchClient client, Counter cloudwatchRequests) {
+    public CollectorWorker(List<Collector.MetricFamilySamples> mfs, long start, CloudWatchCollector.MetricRule rule, List<String> brokenDynamoMetrics, AmazonCloudWatch client, Counter cloudwatchRequests) {
         this.mfs = mfs;
         this.start = start;
         this.rule = rule;
@@ -31,7 +33,15 @@ public class CollectorWorker implements Runnable {
 
     @Override
     public void run() {
+        try {
+            doRun();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error while running the collector thread.", e);
 
+        }
+    }
+
+    private void doRun() {
         Date startDate = new Date(start - 1000 * rule.delaySeconds);
         Date endDate = new Date(start - 1000 * (rule.delaySeconds + rule.rangeSeconds));
         GetMetricStatisticsRequest request = new GetMetricStatisticsRequest();
@@ -185,7 +195,10 @@ public class CollectorWorker implements Runnable {
                 }
             }
             nextToken = result.getNextToken();
+
         } while (nextToken != null);
+
+
 
         return dimensions;
     }
