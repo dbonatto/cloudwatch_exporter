@@ -2,9 +2,12 @@ package io.prometheus.cloudwatch;
 
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
+import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
+import com.amazonaws.services.cloudwatch.AmazonCloudWatch;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
+import com.amazonaws.services.cloudwatch.AmazonCloudWatchClientBuilder;
 import com.amazonaws.services.cloudwatch.model.Datapoint;
 import com.amazonaws.services.cloudwatch.model.Dimension;
 import com.amazonaws.services.cloudwatch.model.Metric;
@@ -26,8 +29,10 @@ import java.util.regex.Pattern;
 
 public class CloudWatchCollector extends Collector {
     private static final Logger LOGGER = Logger.getLogger(CloudWatchCollector.class.getName());
+    public static final String CLOUDWATCH_EXPORTER_SCRAPE_ERROR = "cloudwatch_exporter_scrape_error";
+    public static final String CLOUDWATCH_EXPORTER_SCRAPE_DURATION_SECONDS = "cloudwatch_exporter_scrape_duration_seconds";
 
-    private AmazonCloudWatchClient client;
+    private AmazonCloudWatch client;
     private Region region;
 
     static class MetricRule {
@@ -88,31 +93,39 @@ public class CloudWatchCollector extends Collector {
             defaultDelay = ((Number)config.get("delay_seconds")).intValue();
         }
 
-        ClientConfiguration cc = new ClientConfiguration();
-        String proxy = System.getenv("http_proxy");
-
-        if(proxy != null && !proxy.isEmpty()) {
-            try {
-                URL proxyUrl = new URL(proxy);
-
-                cc.setProxyHost(proxyUrl.getHost());
-                cc.setProxyPort(proxyUrl.getPort());
-            } catch (MalformedURLException e) {
-                LOGGER.log(Level.WARNING, "Proxy configuration is invalid.", e);
-            }
-        }
-
         if (client == null) {
-            if (config.containsKey("role_arn")) {
-                STSAssumeRoleSessionCredentialsProvider credentialsProvider = new STSAssumeRoleSessionCredentialsProvider(
-                        (String) config.get("role_arn"),
-                        "cloudwatch_exporter"
-                );
-                this.client = new AmazonCloudWatchClient(credentialsProvider,cc);
-            } else {
-                this.client = new AmazonCloudWatchClient(cc);
+
+            ClientConfiguration cc = new ClientConfiguration();
+            String proxy = System.getenv("http_proxy");
+
+            if(proxy != null && !proxy.isEmpty()) {
+                try {
+                    URL proxyUrl = new URL(proxy);
+
+                    cc.setProxyHost(proxyUrl.getHost());
+                    cc.setProxyPort(proxyUrl.getPort());
+                } catch (MalformedURLException e) {
+                    LOGGER.log(Level.WARNING, "Proxy configuration is invalid.", e);
+                }
             }
-            this.client.setEndpoint(getMonitoringEndpoint());
+
+            cc.withMaxConnections(150);
+
+            AwsClientBuilder.EndpointConfiguration ec = new AwsClientBuilder.EndpointConfiguration(
+                    getMonitoringEndpoint(), this.region.getName());
+
+            if (config.containsKey("role_arn")) {
+                STSAssumeRoleSessionCredentialsProvider cp = new STSAssumeRoleSessionCredentialsProvider.Builder(
+                        (String) config.get("role_arn"),
+                        "cloudwatch_exporter").build();
+
+                this.client = AmazonCloudWatchClientBuilder.standard()
+                        .withCredentials(cp).withClientConfiguration(cc).withEndpointConfiguration(ec).build();
+
+            } else {
+                this.client = AmazonCloudWatchClientBuilder.standard()
+                        .withClientConfiguration(cc).withEndpointConfiguration(ec).build();
+            }
 
         } else {
             this.client = client;
@@ -297,13 +310,13 @@ public class CloudWatchCollector extends Collector {
         }
         List<MetricFamilySamples.Sample> samples = new ArrayList<MetricFamilySamples.Sample>();
         samples.add(new MetricFamilySamples.Sample(
-                "cloudwatch_exporter_scrape_duration_seconds", new ArrayList<String>(), new ArrayList<String>(), (System.nanoTime() - start) / 1.0E9));
-        mfs.add(new MetricFamilySamples("cloudwatch_exporter_scrape_duration_seconds", Type.GAUGE, "Time this CloudWatch scrape took, in seconds.", samples));
+                CLOUDWATCH_EXPORTER_SCRAPE_DURATION_SECONDS, new ArrayList<String>(), new ArrayList<String>(), (System.nanoTime() - start) / 1.0E9));
+        mfs.add(new MetricFamilySamples(CLOUDWATCH_EXPORTER_SCRAPE_DURATION_SECONDS, Type.GAUGE, "Time this CloudWatch scrape took, in seconds.", samples));
 
         samples = new ArrayList<MetricFamilySamples.Sample>();
         samples.add(new MetricFamilySamples.Sample(
-                "cloudwatch_exporter_scrape_error", new ArrayList<String>(), new ArrayList<String>(), error));
-        mfs.add(new MetricFamilySamples("cloudwatch_exporter_scrape_error", Type.GAUGE, "Non-zero if this scrape failed.", samples));
+                CLOUDWATCH_EXPORTER_SCRAPE_ERROR, new ArrayList<String>(), new ArrayList<String>(), error));
+        mfs.add(new MetricFamilySamples(CLOUDWATCH_EXPORTER_SCRAPE_ERROR, Type.GAUGE, "Non-zero if this scrape failed.", samples));
         return mfs;
     }
 
