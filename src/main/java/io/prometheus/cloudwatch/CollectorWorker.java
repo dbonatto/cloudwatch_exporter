@@ -202,7 +202,7 @@ public class CollectorWorker implements Runnable {
         } while (nextToken != null);
 
         if (dimensions.size() == 0) {
-            LOGGER.warning("AWS returner " + dimensions.size() + " dimensions for " + rule.awsNamespace + "/" + rule.awsMetricName);
+            LOGGER.warning("AWS returned " + dimensions.size() + " dimensions for " + rule.awsNamespace + "/" + rule.awsMetricName + " - " + rule.awsDimensionSelect.toString());
         }
 
         return dimensions;

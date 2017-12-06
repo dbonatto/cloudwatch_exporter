@@ -3,13 +3,11 @@ package io.prometheus.cloudwatch;
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
 import com.amazonaws.client.builder.AwsClientBuilder;
-import com.amazonaws.metrics.AwsSdkMetrics;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatch;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatchClientBuilder;
-import com.amazonaws.services.cloudwatch.model.Datapoint;
 import com.amazonaws.services.cloudwatch.model.Dimension;
 import com.amazonaws.services.cloudwatch.model.Metric;
 import io.prometheus.client.Collector;
@@ -31,8 +29,8 @@ import java.util.regex.Pattern;
 
 public class CloudWatchCollector extends Collector {
     private static final Logger LOGGER = Logger.getLogger(CloudWatchCollector.class.getName());
-    public static final String CLOUDWATCH_EXPORTER_SCRAPE_ERROR = "cloudwatch_exporter_scrape_error";
-    public static final String CLOUDWATCH_EXPORTER_SCRAPE_DURATION_SECONDS = "cloudwatch_exporter_scrape_duration_seconds";
+    private static final String CLOUDWATCH_EXPORTER_SCRAPE_ERROR = "cloudwatch_exporter_scrape_error";
+    private static final String CLOUDWATCH_EXPORTER_SCRAPE_DURATION_SECONDS = "cloudwatch_exporter_scrape_duration_seconds";
 
     private AmazonCloudWatch client;
     private Region region;
@@ -61,15 +59,15 @@ public class CloudWatchCollector extends Collector {
 
     private ArrayList<MetricRule> rules = new ArrayList<MetricRule>();
 
-    public CloudWatchCollector(Reader in) throws IOException {
+    CloudWatchCollector(Reader in) throws IOException {
         this((Map<String, Object>)new Yaml().load(in),null);
     }
-    public CloudWatchCollector(String yamlConfig) {
+    CloudWatchCollector(String yamlConfig) {
         this((Map<String, Object>)new Yaml().load(yamlConfig),null);
     }
 
     /* For unittests. */
-    protected CloudWatchCollector(String jsonConfig, AmazonCloudWatchClient client) {
+    CloudWatchCollector(String jsonConfig, AmazonCloudWatchClient client) {
         this((Map<String, Object>)new Yaml().load(jsonConfig), client);
     }
 
@@ -163,7 +161,7 @@ public class CloudWatchCollector extends Collector {
             if (yamlMetricRule.containsKey("aws_statistics")) {
                 rule.awsStatistics = (List<String>)yamlMetricRule.get("aws_statistics");
             } else if (!yamlMetricRule.containsKey("aws_extended_statistics")) {
-                rule.awsStatistics = new ArrayList(Arrays.asList("Sum", "SampleCount", "Minimum", "Maximum", "Average"));
+                rule.awsStatistics = new ArrayList<String>(Arrays.asList("Sum", "SampleCount", "Minimum", "Maximum", "Average"));
             }
             if (yamlMetricRule.containsKey("aws_extended_statistics")) {
                 rule.awsExtendedStatistics = (List<String>)yamlMetricRule.get("aws_extended_statistics");
@@ -186,24 +184,8 @@ public class CloudWatchCollector extends Collector {
         }
     }
 
-    public String getMonitoringEndpoint() {
+    String getMonitoringEndpoint() {
         return "https://" + region.getServiceEndpoint("monitoring");
-    }
-
-    /**
-     * Check if a metric should be used according to `aws_dimension_select` or `aws_dimension_select_regex`
-     */
-    private boolean useMetric(MetricRule rule, Metric metric) {
-        if (rule.awsDimensionSelect == null && rule.awsDimensionSelectRegex == null) {
-            return true;
-        }
-        if (rule.awsDimensionSelect != null  && metricsIsInAwsDimensionSelect(rule, metric)) {
-            return true;
-        }
-        if (rule.awsDimensionSelectRegex != null  && metricIsInAwsDimensionSelectRegex(rule, metric)) {
-            return true;
-        }
-        return false;
     }
 
     /**
@@ -245,41 +227,13 @@ public class CloudWatchCollector extends Collector {
     /**
      * Check if any regex string in a list matches a given input value
      */
-    protected static boolean regexListMatch(List<String> regexList, String input) {
+    private static boolean regexListMatch(List<String> regexList, String input) {
         for (String regex: regexList) {
             if (Pattern.matches(regex, input)) {
                 return true;
             }
         }
         return false;
-    }
-
-    private Datapoint getNewestDatapoint(java.util.List<Datapoint> datapoints) {
-        Datapoint newest = null;
-        for (Datapoint d: datapoints) {
-            if (newest == null || newest.getTimestamp().before(d.getTimestamp())) {
-                newest = d;
-            }
-        }
-        return newest;
-    }
-
-    private String toSnakeCase(String str) {
-        return str.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase();
-    }
-
-    private String safeName(String s) {
-        // Change invalid chars to underscore, and merge underscores.
-        return s.replaceAll("[^a-zA-Z0-9:_]", "_").replaceAll("__+", "_");
-    }
-
-    private String help(MetricRule rule, String unit, String statistic) {
-        if (rule.help != null) {
-            return rule.help;
-        }
-        return "CloudWatch metric " + rule.awsNamespace + " " + rule.awsMetricName
-                + " Dimensions: " + rule.awsDimensions + " Statistic: " + statistic
-                + " Unit: " + unit;
     }
 
     private void scrape(List<MetricFamilySamples> mfs) throws Exception {
