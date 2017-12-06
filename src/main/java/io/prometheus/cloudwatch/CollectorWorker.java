@@ -7,6 +7,7 @@ import io.prometheus.client.Collector;
 import io.prometheus.client.Counter;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -21,14 +22,16 @@ public class CollectorWorker implements Runnable {
     private List<String> brokenDynamoMetrics;
     private AmazonCloudWatch client;
     private Counter cloudwatchRequests;
+    private AtomicInteger error;
 
-    public CollectorWorker(List<Collector.MetricFamilySamples> mfs, long start, CloudWatchCollector.MetricRule rule, List<String> brokenDynamoMetrics, AmazonCloudWatch client, Counter cloudwatchRequests) {
+    public CollectorWorker(List<Collector.MetricFamilySamples> mfs, long start, CloudWatchCollector.MetricRule rule, List<String> brokenDynamoMetrics, AmazonCloudWatch client, Counter cloudwatchRequests, AtomicInteger error) {
         this.mfs = mfs;
         this.start = start;
         this.rule = rule;
         this.brokenDynamoMetrics = brokenDynamoMetrics;
         this.client = client;
         this.cloudwatchRequests = cloudwatchRequests;
+        this.error = error;
     }
 
     @Override
@@ -37,7 +40,7 @@ public class CollectorWorker implements Runnable {
             doRun();
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error while running the collector thread.", e);
-
+            this.error.set(1);
         }
     }
 
@@ -198,7 +201,9 @@ public class CollectorWorker implements Runnable {
 
         } while (nextToken != null);
 
-
+        if (dimensions.size() == 0) {
+            LOGGER.warning("AWS returner " + dimensions.size() + " dimensions for " + rule.awsNamespace + "/" + rule.awsMetricName);
+        }
 
         return dimensions;
     }

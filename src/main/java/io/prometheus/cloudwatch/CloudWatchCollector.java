@@ -3,6 +3,7 @@ package io.prometheus.cloudwatch;
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
 import com.amazonaws.client.builder.AwsClientBuilder;
+import com.amazonaws.metrics.AwsSdkMetrics;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatch;
@@ -23,6 +24,7 @@ import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -280,20 +282,25 @@ public class CloudWatchCollector extends Collector {
                 + " Unit: " + unit;
     }
 
-    private void scrape(List<MetricFamilySamples> mfs) throws InterruptedException {
+    private void scrape(List<MetricFamilySamples> mfs) throws Exception {
 
         ExecutorService executor = Executors.newFixedThreadPool(10);
+        AtomicInteger error = new AtomicInteger();
 
         try {
             long start = System.currentTimeMillis();
             for (MetricRule rule: rules) {
 
-                Runnable worker = new CollectorWorker(mfs,start,rule,brokenDynamoMetrics,client,cloudwatchRequests);
+                Runnable worker = new CollectorWorker(mfs,start,rule,brokenDynamoMetrics,client,cloudwatchRequests,error);
                 executor.execute(worker);
             }
         } finally {
             executor.shutdown();
             executor.awaitTermination(5, TimeUnit.MINUTES);
+        }
+
+        if (error.intValue() > 0) {
+            throw new Exception("Error Scraping metrics.");
         }
     }
 
@@ -317,6 +324,7 @@ public class CloudWatchCollector extends Collector {
         samples.add(new MetricFamilySamples.Sample(
                 CLOUDWATCH_EXPORTER_SCRAPE_ERROR, new ArrayList<String>(), new ArrayList<String>(), error));
         mfs.add(new MetricFamilySamples(CLOUDWATCH_EXPORTER_SCRAPE_ERROR, Type.GAUGE, "Non-zero if this scrape failed.", samples));
+
         return mfs;
     }
 
