@@ -5,6 +5,7 @@ import static org.junit.Assert.assertNull;
 import static org.mockito.Matchers.anyObject;
 import static org.mockito.Matchers.argThat;
 
+import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
 import com.amazonaws.services.cloudwatch.model.Datapoint;
 import com.amazonaws.services.cloudwatch.model.Dimension;
@@ -299,6 +300,7 @@ public class CloudWatchCollectorTest {
   @Test
   public void testGetMonitoringEndpoint() throws Exception {
     CloudWatchCollector us_collector = new CloudWatchCollector("---\nregion: us-east-1\nmetrics: []\n");
+
     assertEquals("https://monitoring.us-east-1.amazonaws.com", us_collector.getMonitoringEndpoint());
 
     CloudWatchCollector cn_collector = new CloudWatchCollector("---\nregion: cn-north-1\nmetrics: []\n");
