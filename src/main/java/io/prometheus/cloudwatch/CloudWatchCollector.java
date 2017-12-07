@@ -5,6 +5,7 @@ import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
 import com.amazonaws.client.builder.AwsClientBuilder;
 import com.amazonaws.regions.Region;
 import com.amazonaws.regions.RegionUtils;
+import com.amazonaws.retry.PredefinedRetryPolicies;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatch;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatchClient;
 import com.amazonaws.services.cloudwatch.AmazonCloudWatchClientBuilder;
@@ -31,6 +32,7 @@ public class CloudWatchCollector extends Collector {
     private static final Logger LOGGER = Logger.getLogger(CloudWatchCollector.class.getName());
     private static final String CLOUDWATCH_EXPORTER_SCRAPE_ERROR = "cloudwatch_exporter_scrape_error";
     private static final String CLOUDWATCH_EXPORTER_SCRAPE_DURATION_SECONDS = "cloudwatch_exporter_scrape_duration_seconds";
+    private Map<String, Object> config  = new HashMap<String, Object>();
 
     private AmazonCloudWatch client;
     private Region region;
@@ -52,11 +54,6 @@ public class CloudWatchCollector extends Collector {
     private static final Counter cloudwatchRequests = Counter.build()
             .name("cloudwatch_requests_total").help("API requests made to CloudWatch").register();
 
-    private static final List<String> brokenDynamoMetrics = Arrays.asList(
-            "ConsumedReadCapacityUnits", "ConsumedWriteCapacityUnits",
-            "ProvisionedReadCapacityUnits", "ProvisionedWriteCapacityUnits",
-            "ReadThrottleEvents", "WriteThrottleEvents");
-
     private ArrayList<MetricRule> rules = new ArrayList<MetricRule>();
 
     CloudWatchCollector(Reader in) throws IOException {
@@ -72,69 +69,35 @@ public class CloudWatchCollector extends Collector {
     }
 
     private CloudWatchCollector(Map<String, Object> config, AmazonCloudWatchClient client) {
-        if(config == null) {  // Yaml config empty, set config to empty map.
-            config = new HashMap<String, Object>();
+        if(config != null) {  // Yaml config empty, set config to empty map.
+            this.config = config;
         }
-        if (!config.containsKey("region")) {
+        if (!this.config.containsKey("region")) {
             throw new IllegalArgumentException("Must provide region");
         }
-        region = RegionUtils.getRegion((String) config.get("region"));
+        region = RegionUtils.getRegion((String) this.config.get("region"));
+
+        this.client = client;
+
+//        createClient();
 
         int defaultPeriod = 60;
-        if (config.containsKey("period_seconds")) {
-            defaultPeriod = ((Number)config.get("period_seconds")).intValue();
+        if (this.config.containsKey("period_seconds")) {
+            defaultPeriod = ((Number)this.config.get("period_seconds")).intValue();
         }
         int defaultRange = 600;
-        if (config.containsKey("range_seconds")) {
-            defaultRange = ((Number)config.get("range_seconds")).intValue();
+        if (this.config.containsKey("range_seconds")) {
+            defaultRange = ((Number)this.config.get("range_seconds")).intValue();
         }
         int defaultDelay = 600;
-        if (config.containsKey("delay_seconds")) {
-            defaultDelay = ((Number)config.get("delay_seconds")).intValue();
+        if (this.config.containsKey("delay_seconds")) {
+            defaultDelay = ((Number)this.config.get("delay_seconds")).intValue();
         }
 
-        if (client == null) {
-
-            ClientConfiguration cc = new ClientConfiguration();
-            String proxy = System.getenv("http_proxy");
-
-            if(proxy != null && !proxy.isEmpty()) {
-                try {
-                    URL proxyUrl = new URL(proxy);
-
-                    cc.setProxyHost(proxyUrl.getHost());
-                    cc.setProxyPort(proxyUrl.getPort());
-                } catch (MalformedURLException e) {
-                    LOGGER.log(Level.WARNING, "Proxy configuration is invalid.", e);
-                }
-            }
-
-            cc.withMaxConnections(150);
-
-            AwsClientBuilder.EndpointConfiguration ec = new AwsClientBuilder.EndpointConfiguration(
-                    getMonitoringEndpoint(), this.region.getName());
-
-            if (config.containsKey("role_arn")) {
-                STSAssumeRoleSessionCredentialsProvider cp = new STSAssumeRoleSessionCredentialsProvider.Builder(
-                        (String) config.get("role_arn"),
-                        "cloudwatch_exporter").build();
-
-                this.client = AmazonCloudWatchClientBuilder.standard()
-                        .withCredentials(cp).withClientConfiguration(cc).withEndpointConfiguration(ec).build();
-
-            } else {
-                this.client = AmazonCloudWatchClientBuilder.standard()
-                        .withClientConfiguration(cc).withEndpointConfiguration(ec).build();
-            }
-
-        } else {
-            this.client = client;
-        }
-
-        if (!config.containsKey("metrics")) {
+        if (!this.config.containsKey("metrics")) {
             throw new IllegalArgumentException("Must provide metrics");
         }
-        for (Object ruleObject : (List<Map<String,Object>>) config.get("metrics")) {
+        for (Object ruleObject : (List<Map<String,Object>>) this.config.get("metrics")) {
             Map<String, Object> yamlMetricRule = (Map<String, Object>)ruleObject;
             MetricRule rule = new MetricRule();
             rules.add(rule);
@@ -182,10 +145,6 @@ public class CloudWatchCollector extends Collector {
                 rule.delaySeconds = defaultDelay;
             }
         }
-    }
-
-    String getMonitoringEndpoint() {
-        return "https://" + region.getServiceEndpoint("monitoring");
     }
 
     /**
@@ -238,19 +197,21 @@ public class CloudWatchCollector extends Collector {
 
     private void scrape(List<MetricFamilySamples> mfs) throws Exception {
 
-        ExecutorService executor = Executors.newFixedThreadPool(10);
+        ExecutorService executor = Executors.newFixedThreadPool(Configuration.threadPoolSize());
         AtomicInteger error = new AtomicInteger();
 
-        try {
-            long start = System.currentTimeMillis();
-            for (MetricRule rule: rules) {
+        // Todo: Refactor tests so this override is not needed anymore
+        AmazonCloudWatch cloudWatch = this.client != null ? this.client : doCreateClient();
 
-                Runnable worker = new CollectorWorker(mfs,start,rule,brokenDynamoMetrics,client,cloudwatchRequests,error);
+        try {
+            for (MetricRule rule: rules) {
+                Runnable worker = new CollectorWorker(mfs,rule,cloudwatchRequests, error, cloudWatch);
                 executor.execute(worker);
             }
         } finally {
             executor.shutdown();
             executor.awaitTermination(5, TimeUnit.MINUTES);
+            cloudWatch.shutdown();
         }
 
         if (error.intValue() > 0) {
@@ -280,6 +241,56 @@ public class CloudWatchCollector extends Collector {
         mfs.add(new MetricFamilySamples(CLOUDWATCH_EXPORTER_SCRAPE_ERROR, Type.GAUGE, "Non-zero if this scrape failed.", samples));
 
         return mfs;
+    }
+
+    public String getMonitoringEndpoint() {
+        return "https://" + region.getServiceEndpoint("monitoring");
+    }
+
+    private void createClient() {
+
+        if (this.client == null) {
+            this.client = doCreateClient();
+        }
+    }
+
+    public AmazonCloudWatch doCreateClient() {
+        AmazonCloudWatch client;
+
+        ClientConfiguration cc = new ClientConfiguration();
+        String proxy = System.getenv("http_proxy");
+
+        if(proxy != null && !proxy.isEmpty()) {
+            try {
+                URL proxyUrl = new URL(proxy);
+
+                cc.setProxyHost(proxyUrl.getHost());
+                cc.setProxyPort(proxyUrl.getPort());
+            } catch (MalformedURLException e) {
+                LOGGER.log(Level.WARNING, "Proxy configuration is invalid.", e);
+            }
+        }
+
+        cc.withMaxConnections(Configuration.maxConnections());
+        cc.setRetryPolicy(PredefinedRetryPolicies.getDefaultRetryPolicy());
+
+        AwsClientBuilder.EndpointConfiguration ec = new AwsClientBuilder.EndpointConfiguration(
+                getMonitoringEndpoint(), this.region.getName());
+
+        if (this.config.containsKey("role_arn")) {
+            STSAssumeRoleSessionCredentialsProvider cp = new STSAssumeRoleSessionCredentialsProvider.Builder(
+                    (String) this.config.get("role_arn"),
+                    "cloudwatch_exporter").build();
+
+            client = AmazonCloudWatchClientBuilder.standard()
+                    .withCredentials(cp).withClientConfiguration(cc).withEndpointConfiguration(ec).build();
+
+        } else {
+            client = AmazonCloudWatchClientBuilder.standard()
+                    .withClientConfiguration(cc).withEndpointConfiguration(ec).build();
+        }
+
+        return client;
     }
 
     /**

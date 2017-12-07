@@ -1,7 +1,25 @@
+**This is a fork of the official repository.**
+
+Because of some specific requirements I have around performance, I decide to fork the official repository and implement some improvements.
+
+Things that I have worked so far:
+
+ - Added thread support on the CloudWatch scraping, so a big list of metrics can be retrieved in an acceptable time;
+ - Adding proxy support, if you set the environment variable http_proxy, that will be passed on to the AWS SDK;
+ - Added support to configure the service using environment variables, for now: 
+   - CLOUDWATCH_THREADS: number of threads while scraping Cloudwatch metrics. Default=10
+   - CLOUDWATCH_MAXCONNECTIONS: Max number of active connections on the AWS SDK. Default=150
+ - Improvements in error logs;
+ - Updated dependencies;
+ - Fixed use of deprecated AWS SDK classes; 
+
+If you have feedback, just let me know. Now on with the official documentation...
+
 CloudWatch Exporter
 =====
 
 An exporter for [Amazon CloudWatch](http://aws.amazon.com/cloudwatch/), for Prometheus.
+
 
 ## Building and running
 
